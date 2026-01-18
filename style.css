@@ -4,6 +4,9 @@
     padding: 0;
     box-sizing: border-box;
     font-family: 'Poppins', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    /* Mobile Optimization: Prevent accidental zooming on double taps */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 @keyframes animated-gradient {
@@ -27,11 +30,13 @@ body {
     min-height: 100vh;
     display: flex;
     justify-content: center;
-    align-items: center;
-    padding: 20px;
+    padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
+    /* iOS Safe Area */
     color: #fff;
     overflow-x: hidden;
     position: relative;
+    /* Prevent pull-to-refresh on mobile */
+    overscroll-behavior: none;
 }
 
 .container {
@@ -605,7 +610,8 @@ body.dark-mode .modal-content {
     padding: 10px;
     border-radius: 10px;
     border: none;
-    font-size: 1rem;
+    font-size: 16px;
+    /* Prevent iOS Zoom */
     background: #fff;
     color: #333;
 }
@@ -744,7 +750,8 @@ body.dark-mode .modal-content input {
     border-radius: 20px;
     background: rgba(255, 255, 255, 0.2);
     color: #fff;
-    font-size: 0.9rem;
+    font-size: 16px;
+    /* Prevent iOS Zoom */
 }
 
 #chat-input::placeholder {
