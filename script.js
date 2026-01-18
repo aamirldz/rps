@@ -1,6 +1,5 @@
 /**
- * RPS Ultimate 2.0 - Client Side Port
- * Original logic ported from Python to JS for Cloudflare Pages
+ * RPS Ultimate 2.0 - Client Side Port with PeerJS (Serverless Multiplayer)
  */
 
 // --- Global State ---
@@ -34,6 +33,8 @@ const dom = {
     nameModal: document.getElementById('name-modal'),
     modeModal: document.getElementById('mode-modal'),
     friendModal: document.getElementById('friend-modal'),
+    joinRoomModal: document.getElementById('join-room-modal'),
+    waitingModal: document.getElementById('waiting-modal'),
     gameContainer: document.getElementById('game-container'),
     winnerModal: document.getElementById('winner-modal'),
     seriesModal: document.getElementById('series-modal'),
@@ -48,8 +49,15 @@ const dom = {
     profileAvatar: document.getElementById('profile-avatar'),
     changeNameBtn: document.getElementById('change-name-btn'),
 
-    // Game
+    // Game Mode Buttons
     computerBtn: document.getElementById('computer-btn'),
+    friendBtn: document.getElementById('friend-btn'),
+    createRoomBtn: document.getElementById('create-room-btn'),
+    joinRoomBtn: document.getElementById('join-room-btn'),
+    submitJoinRoomBtn: document.getElementById('submit-join-room-btn'),
+    roomCodeInput: document.getElementById('room-code-input'),
+    roomCodeDisplay: document.getElementById('room-code-display'),
+
     seriesBtns: document.querySelectorAll('.series-btn'),
 
     // In-Game
@@ -79,9 +87,23 @@ const dom = {
     p1LongestStreak: document.getElementById('p1-longest-streak'),
     historyList: document.getElementById('history-list'),
 
+    // Chat
+    chatContainer: document.getElementById('chat-box-container'),
+    chatMessages: document.getElementById('chat-messages'),
+    chatInput: document.getElementById('chat-input'),
+    sendChatBtn: document.getElementById('send-chat-btn'),
+
     // Utility
     modeToggle: document.getElementById('mode-toggle')
 };
+
+// --- Multiplayer State (PeerJS) ---
+let peer = null;
+let conn = null;
+let isHost = false;
+let myMove = null;
+let opponentMove = null;
+let isMultiplayer = false;
 
 // --- Initialization ---
 
@@ -132,8 +154,6 @@ function showModeSelection() {
     dom.profileUsername.textContent = APP_STATE.username;
     dom.profileAvatar.textContent = APP_STATE.avatar;
     dom.modeModal.style.display = 'flex';
-
-    // Update Stats Display
     updateStatsUI();
 }
 
@@ -175,25 +195,55 @@ function setupEventListeners() {
         dom.usernameInput.value = "";
     });
 
-    // Start Mode -> Series Selection
+    // --- GAME MODES ---
+
+    // AI Mode
     dom.computerBtn.addEventListener('click', () => {
+        isMultiplayer = false;
         dom.modeModal.style.display = 'none';
         dom.seriesModal.style.display = 'flex';
     });
 
-    // Series Length Selection
+    // Friend Mode
+    dom.friendBtn.addEventListener('click', () => {
+        isMultiplayer = true;
+        seriesLength = 5; // Default for friend mode or ask? Let's use 5 for now.
+        dom.modeModal.style.display = 'none';
+        dom.friendModal.style.display = 'flex';
+    });
+
+    // Create Room
+    dom.createRoomBtn.addEventListener('click', () => {
+        initializePeer(true);
+    });
+
+    // Join Room UI
+    dom.joinRoomBtn.addEventListener('click', () => {
+        dom.friendModal.style.display = 'none';
+        dom.joinRoomModal.style.display = 'flex';
+    });
+
+    // Submit Join Code
+    dom.submitJoinRoomBtn.addEventListener('click', () => {
+        const code = dom.roomCodeInput.value.trim().toUpperCase();
+        if (code.length !== 4) return showToast("Code must be 4 characters", "error");
+        initializePeer(false, code);
+    });
+
+    // Series Length Selection (AI Only currently)
     dom.seriesBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             seriesLength = parseInt(btn.dataset.length) || 0;
             dom.seriesModal.style.display = 'none';
-            startGame();
+            if (!isMultiplayer) startGameAI();
         });
     });
 
     // Gameplay Choices
     dom.buttons.forEach(btn => {
         btn.addEventListener('click', () => {
-            playRound(btn.dataset.choice);
+            if (isMultiplayer) playRoundMultiplayer(btn.dataset.choice);
+            else playRoundAI(btn.dataset.choice);
         });
     });
 
@@ -203,26 +253,239 @@ function setupEventListeners() {
             const targetId = btn.getAttribute('data-target');
             btn.closest('.modal').style.display = 'none';
             document.getElementById(targetId).style.display = 'flex';
+
+            // Cleanup Peer if backing out of waiting or join
+            if (peer) { peer.destroy(); peer = null; }
         });
     });
 
     // Reset / Exit
     dom.resetBtn.addEventListener('click', resetBoardScores);
-    dom.resetBtnTop.addEventListener('click', exitToMenu);
+    dom.resetBtnTop.addEventListener('click', () => {
+        if (isMultiplayer && conn) { conn.send({ type: 'left' }); conn.close(); }
+        exitToMenu();
+    });
     dom.exitFromWinnerBtn.addEventListener('click', exitToMenu);
 
     dom.playAgainBtn.addEventListener('click', () => {
         dom.winnerModal.style.display = 'none';
         resetBoardScores();
-        // Go back to series selection for "New Series"
-        dom.gameContainer.style.display = 'none';
-        dom.seriesModal.style.display = 'flex';
+
+        if (isMultiplayer) {
+            // Send Restart Request
+            if (conn) conn.send({ type: 'restart_request' });
+            showToast("Waiting for opponent...", "info");
+        } else {
+            dom.gameContainer.style.display = 'none';
+            dom.seriesModal.style.display = 'flex';
+        }
+    });
+
+    // Chat
+    dom.sendChatBtn.addEventListener('click', sendChatMessage);
+    dom.chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendChatMessage();
     });
 }
 
-// --- Game Logic ---
+// --- PEER JS MULTIPLAYER LOGIC ---
 
-function startGame() {
+function generateRoomCode() {
+    return Math.random().toString(36).substring(2, 6).toUpperCase();
+}
+
+function initializePeer(isHostParam, roomCodeParam = null) {
+    isHost = isHostParam;
+    const myId = isHost ? generateRoomCode() : null; // Host gets generated ID, Joiner gets auto ID
+
+    // Show loading or waiting
+    if (isHost) {
+        dom.friendModal.style.display = 'none';
+        dom.waitingModal.style.display = 'flex';
+        dom.roomCodeDisplay.textContent = myId;
+    }
+
+    peer = new Peer(myId, {
+        debug: 1
+    });
+
+    peer.on('open', (id) => {
+        console.log('My Peer ID:', id);
+        if (!isHost) {
+            // If joiner, connect to host
+            connectToPeer(roomCodeParam);
+        }
+    });
+
+    peer.on('connection', (c) => {
+        // Host receives connection
+        if (isHost) {
+            conn = c;
+            setupConnection();
+            dom.waitingModal.style.display = 'none';
+            // Start Game
+            startGameMultiplayer();
+        }
+    });
+
+    peer.on('error', (err) => {
+        console.error(err);
+        showToast("Connection Error: " + err.type, "error");
+        if (dom.joinRoomModal.style.display === 'flex') {
+            dom.roomCodeInput.value = '';
+        }
+    });
+}
+
+function connectToPeer(hostId) {
+    conn = peer.connect(hostId);
+    conn.on('open', () => {
+        setupConnection();
+        dom.joinRoomModal.style.display = 'none';
+        startGameMultiplayer();
+    });
+    conn.on('error', (err) => showToast("Could not connect to room", "error"));
+}
+
+function setupConnection() {
+    conn.on('data', (data) => {
+        handleIncomingData(data);
+    });
+    conn.on('close', () => {
+        showToast("Opponent disconnected", "error");
+        setTimeout(exitToMenu, 2000);
+    });
+}
+
+function handleIncomingData(data) {
+    switch (data.type) {
+        case 'info':
+            // Opponent sent name/avatar
+            currentGame.p2Name = data.name;
+            currentGame.p2Avatar = data.avatar;
+            updateGameUIHeader();
+            break;
+        case 'move':
+            opponentMove = data.move;
+            checkMultiplayerRound();
+            break;
+        case 'chat':
+            addChatMessage(data.message, false);
+            break;
+        case 'restart_request':
+            showToast("Opponent wants to play again!", "success");
+            // If both accept/logic here clearly simplified
+            resetBoardScores();
+            break;
+        case 'left':
+            showToast("Opponent left the game", "info");
+            setTimeout(exitToMenu, 2000);
+            break;
+    }
+}
+
+function startGameMultiplayer() {
+    isMultiplayer = true;
+    seriesLength = 5; // Default
+
+    currentGame.p1Name = APP_STATE.username;
+    currentGame.p1Avatar = APP_STATE.avatar;
+    currentGame.p2Name = "Opponent"; // Will update
+    currentGame.p2Avatar = "❓";
+
+    currentGame.p1SeriesScore = 0;
+    currentGame.p2SeriesScore = 0;
+
+    dom.gameContainer.style.display = 'block';
+    dom.statsBox.style.display = 'block';
+    dom.chatContainer.style.display = 'block'; // Show Chat
+
+    // Send my info
+    conn.send({
+        type: 'info',
+        name: APP_STATE.username,
+        avatar: APP_STATE.avatar
+    });
+
+    updateGameUIHeader();
+    resetBoardScores();
+}
+
+function playRoundMultiplayer(choice) {
+    if (myMove) return; // Already picked
+
+    myMove = choice;
+    // Lock buttons
+    dom.buttons.forEach(b => b.disabled = true);
+    dom.message.textContent = "Waiting for opponent...";
+    dom.player1Hand.textContent = iToE(choice); // Show my choice? Or hide until reveal?
+    // Usually hide. But let's show "?" for now or just my choice
+    dom.player1Hand.textContent = '✔️';
+
+    // Send move (hashed or just move, local trust)
+    conn.send({ type: 'move', move: choice });
+
+    checkMultiplayerRound();
+}
+
+async function checkMultiplayerRound() {
+    if (myMove && opponentMove) {
+        // Both moved
+        // Animation
+        dom.player1Hand.textContent = '✊';
+        dom.player2Hand.textContent = '✊';
+        dom.player1Hand.classList.add('shaking');
+        dom.player2Hand.classList.add('shaking');
+
+        await wait(500);
+
+        dom.player1Hand.classList.remove('shaking');
+        dom.player2Hand.classList.remove('shaking');
+
+        // Determine Winner
+        let result = 'lose';
+        if (myMove === opponentMove) result = 'tie';
+        else if (WIN_CONDITIONS[myMove] === opponentMove) result = 'win';
+
+        // Update UI
+        dom.player1Hand.textContent = iToE(myMove);
+        dom.player2Hand.textContent = iToE(opponentMove);
+
+        handleRoundResult(result, myMove, opponentMove);
+
+        // Reset moves
+        myMove = null;
+        opponentMove = null;
+    }
+}
+
+
+function sendChatMessage() {
+    const text = dom.chatInput.value.trim();
+    if (!text || !conn) return;
+
+    conn.send({ type: 'chat', message: text });
+    addChatMessage(text, true);
+    dom.chatInput.value = '';
+}
+
+function addChatMessage(text, isMe) {
+    const div = document.createElement('div');
+    div.className = `chat-message ${isMe ? 'my-message' : 'other-message'}`;
+    div.innerHTML = `
+        <div class="message-bubble">
+            <div class="sender-name">${isMe ? 'You' : currentGame.p2Name}</div>
+            <div class="message-text">${text}</div>
+        </div>
+    `;
+    dom.chatMessages.appendChild(div);
+    dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+}
+
+
+// --- AI GAME LOGIC ---
+
+function startGameAI() {
     currentGame.p1Name = APP_STATE.username;
     currentGame.p1Avatar = APP_STATE.avatar;
     currentGame.p2Name = "Smarter AI";
@@ -230,14 +493,62 @@ function startGame() {
     currentGame.p1SeriesScore = 0;
     currentGame.p2SeriesScore = 0;
 
-    // Update UI Labels
+    dom.chatContainer.style.display = 'none'; // Hide Chat
+    updateGameUIHeader();
+    dom.gameContainer.style.display = 'block';
+    dom.statsBox.style.display = 'block';
+    resetBoardScores();
+}
+
+function getAIThinkingMove() {
+    const history = APP_STATE.playerMoves;
+    let choice = null;
+    if (history.length > 0 && Math.random() < 0.7) {
+        const counts = history.reduce((acc, move) => { acc[move] = (acc[move] || 0) + 1; return acc; }, {});
+        const mostFrequent = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
+        choice = AI_COUNTERS[mostFrequent];
+    }
+    return choice || VALID_MOVES[Math.floor(Math.random() * VALID_MOVES.length)];
+}
+
+async function playRoundAI(playerChoice) {
+    dom.buttons.forEach(b => b.disabled = true);
+
+    dom.message.textContent = "3...";
+    dom.player1Hand.textContent = '✊'; dom.player2Hand.textContent = '✊';
+    dom.player1Hand.classList.add('shaking'); dom.player2Hand.classList.add('shaking');
+    await wait(700);
+    dom.message.textContent = "2..."; await wait(700);
+    dom.message.textContent = "1..."; await wait(700);
+    dom.message.textContent = "SHOOT!";
+
+    dom.player1Hand.classList.remove('shaking'); dom.player2Hand.classList.remove('shaking');
+
+    const aiChoice = getAIThinkingMove();
+    APP_STATE.playerMoves.push(playerChoice);
+    if (APP_STATE.playerMoves.length > 20) APP_STATE.playerMoves.shift();
+
+    let result = 'lose';
+    if (playerChoice === aiChoice) result = 'tie';
+    else if (WIN_CONDITIONS[playerChoice] === aiChoice) result = 'win';
+
+    dom.player1Hand.textContent = iToE(playerChoice);
+    dom.player2Hand.textContent = iToE(aiChoice);
+
+    handleRoundResult(result, playerChoice, aiChoice);
+}
+
+
+// --- SHARED UI LOGIC ---
+
+function updateGameUIHeader() {
     dom.player1Label.textContent = currentGame.p1Name;
     dom.player1Avatar.textContent = currentGame.p1Avatar;
     dom.player2Label.textContent = currentGame.p2Name;
     dom.player2Avatar.textContent = currentGame.p2Avatar;
 
     document.getElementById('player1-series-label').textContent = "P1 Wins:";
-    document.getElementById('player2-series-label').textContent = "AI Wins:";
+    document.getElementById('player2-series-label').textContent = isMultiplayer ? "P2 Wins:" : "AI Wins:";
     document.getElementById('p1-stats-label').textContent = currentGame.p1Name;
     document.getElementById('p2-stats-label').textContent = currentGame.p2Name;
 
@@ -247,11 +558,65 @@ function startGame() {
         seriesText = `Best of ${seriesLength} (${targetWins} Wins)`;
     }
     dom.seriesTargetDisplay.textContent = seriesText;
+}
 
-    dom.gameContainer.style.display = 'block';
-    dom.statsBox.style.display = 'block';
 
-    resetBoardScores();
+function handleRoundResult(result, p1Move, p2Move) {
+    APP_STATE.roundsPlayed++;
+    let msg = "";
+
+    if (result === 'win') {
+        msg = "You Win the Round! 🥇";
+        playSound('sound-win');
+        dom.player1Hand.classList.add('win-hand');
+        dom.player2Hand.classList.add('lose-hand');
+        currentGame.p1Score++;
+        currentGame.p1SeriesScore++;
+        APP_STATE.wins++;
+        APP_STATE.streak++;
+        if (APP_STATE.streak > APP_STATE.longestStreak) {
+            APP_STATE.longestStreak = APP_STATE.streak;
+            localStorage.setItem('rps_longestStreak', APP_STATE.longestStreak);
+        }
+    } else if (result === 'lose') {
+        msg = isMultiplayer ? "Opponent Wins the Round! 🥈" : "Computer Wins the Round! 🥈";
+        playSound('sound-lose');
+        dom.player2Hand.classList.add('win-hand');
+        dom.player1Hand.classList.add('lose-hand');
+        currentGame.p2Score++;
+        currentGame.p2SeriesScore++;
+        APP_STATE.losses++;
+        APP_STATE.streak = 0;
+    } else {
+        msg = "It's a Tie! 🤝";
+        playSound('sound-tie');
+        currentGame.ties++;
+        APP_STATE.ties++;
+    }
+
+    localStorage.setItem('rps_wins', APP_STATE.wins);
+    localStorage.setItem('rps_losses', APP_STATE.losses);
+    localStorage.setItem('rps_ties', APP_STATE.ties);
+
+    dom.message.textContent = msg;
+    updateScoreUI();
+    updateStatsUI();
+    addToHistory(result, p1Move, p2Move);
+
+    if (checkSeriesWinner()) return;
+
+    setTimeout(() => {
+        dom.buttons.forEach(b => b.disabled = false);
+        dom.message.textContent = "Make your next move!";
+        dom.player1Hand.classList.remove('win-hand', 'lose-hand');
+        dom.player2Hand.classList.remove('win-hand', 'lose-hand');
+
+        // Reset Multiplayer Hands
+        if (isMultiplayer) {
+            dom.player1Hand.textContent = '❔';
+            dom.player2Hand.textContent = '❔';
+        }
+    }, 2000);
 }
 
 function resetBoardScores() {
@@ -273,141 +638,13 @@ function resetBoardScores() {
     dom.buttons.forEach(b => b.disabled = false);
 }
 
-function getAIThinkingMove() {
-    // --- SMARTER AI LOGIC (Ported) ---
-    // 70% chance to counter player's most frequent move
-    // 30% random
-    const history = APP_STATE.playerMoves;
-    let choice = null;
-
-    if (history.length > 0 && Math.random() < 0.7) {
-        // Find most frequent move
-        const counts = history.reduce((acc, move) => {
-            acc[move] = (acc[move] || 0) + 1;
-            return acc;
-        }, {});
-
-        const mostFrequent = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
-        choice = AI_COUNTERS[mostFrequent];
-    }
-
-    if (!choice) {
-        choice = VALID_MOVES[Math.floor(Math.random() * VALID_MOVES.length)];
-    }
-
-    return choice;
-}
-
-async function playRound(playerChoice) {
-    // 1. Lock UI
-    dom.buttons.forEach(b => b.disabled = true);
-
-    // 2. Countdown Animation
-    dom.message.textContent = "3...";
-    dom.player1Hand.textContent = '✊';
-    dom.player2Hand.textContent = '✊';
-    dom.player1Hand.classList.add('shaking');
-    dom.player2Hand.classList.add('shaking');
-
-    await wait(700);
-    dom.message.textContent = "2...";
-    await wait(700);
-    dom.message.textContent = "1...";
-    await wait(700);
-    dom.message.textContent = "SHOOT!";
-
-    dom.player1Hand.classList.remove('shaking');
-    dom.player2Hand.classList.remove('shaking');
-
-    // 3. Logic
-    const aiChoice = getAIThinkingMove();
-
-    // Record player move
-    APP_STATE.playerMoves.push(playerChoice);
-    if (APP_STATE.playerMoves.length > 20) APP_STATE.playerMoves.shift();
-
-    // Determine winner
-    let result = 'lose'; // default to player lost
-    if (playerChoice === aiChoice) result = 'tie';
-    else if (WIN_CONDITIONS[playerChoice] === aiChoice) result = 'win';
-
-    // 4. Update UI
-    const emojiMap = { 'rock': '✊', 'paper': '🖐️', 'scissors': '✌️' };
-    dom.player1Hand.textContent = emojiMap[playerChoice];
-    dom.player2Hand.textContent = emojiMap[aiChoice];
-
-    handleRoundResult(result, playerChoice, aiChoice);
-}
-
-function handleRoundResult(result, p1Move, p2Move) {
-    APP_STATE.roundsPlayed++;
-    APP_STATE.totalRounds++;
-
-    let msg = "";
-
-    if (result === 'win') {
-        msg = "You Win the Round! 🥇";
-        playSound('sound-win');
-        dom.player1Hand.classList.add('win-hand');
-        dom.player2Hand.classList.add('lose-hand');
-
-        currentGame.p1Score++;
-        currentGame.p1SeriesScore++;
-        APP_STATE.wins++;
-        APP_STATE.streak++;
-        if (APP_STATE.streak > APP_STATE.longestStreak) {
-            APP_STATE.longestStreak = APP_STATE.streak;
-            localStorage.setItem('rps_longestStreak', APP_STATE.longestStreak);
-        }
-    } else if (result === 'lose') {
-        msg = "Computer Wins the Round! 🥈";
-        playSound('sound-lose');
-        dom.player2Hand.classList.add('win-hand');
-        dom.player1Hand.classList.add('lose-hand');
-
-        currentGame.p2Score++;
-        currentGame.p2SeriesScore++;
-        APP_STATE.losses++;
-        APP_STATE.streak = 0;
-    } else {
-        msg = "It's a Tie! 🤝";
-        playSound('sound-tie');
-        currentGame.ties++;
-        APP_STATE.ties++;
-    }
-
-    // Save Persistent Stats
-    localStorage.setItem('rps_wins', APP_STATE.wins);
-    localStorage.setItem('rps_losses', APP_STATE.losses);
-    localStorage.setItem('rps_ties', APP_STATE.ties);
-
-    dom.message.textContent = msg;
-    updateScoreUI();
-    updateStatsUI();
-    addToHistory(result, p1Move, p2Move);
-
-    // Check Series Winner
-    if (checkSeriesWinner()) {
-        return; // Don't unlock buttons
-    }
-
-    // Unlock buttons after delay
-    setTimeout(() => {
-        dom.buttons.forEach(b => b.disabled = false);
-        dom.message.textContent = "Make your next move!";
-        dom.player1Hand.classList.remove('win-hand', 'lose-hand');
-        dom.player2Hand.classList.remove('win-hand', 'lose-hand');
-    }, 2000);
-}
-
 function checkSeriesWinner() {
     if (seriesLength === 0) return false;
-
     const target = Math.ceil(seriesLength / 2);
     let winner = null;
 
     if (currentGame.p1SeriesScore >= target) winner = APP_STATE.username;
-    else if (currentGame.p2SeriesScore >= target) winner = "Smarter AI";
+    else if (currentGame.p2SeriesScore >= target) winner = currentGame.p2Name;
 
     if (winner) {
         document.getElementById('final-winner-message').textContent = `${winner} wins the Best of ${seriesLength} series! 🏆`;
@@ -421,46 +658,33 @@ function updateScoreUI() {
     dom.player1Score.textContent = currentGame.p1Score;
     dom.player2Score.textContent = currentGame.p2Score;
     document.getElementById('ties').textContent = currentGame.ties;
-
     dom.player1SeriesScore.textContent = currentGame.p1SeriesScore;
     dom.player2SeriesScore.textContent = currentGame.p2SeriesScore;
 }
 
 function updateStatsUI() {
     dom.roundsPlayed.textContent = APP_STATE.roundsPlayed;
-
-    // P1 Stats (User)
     const total = APP_STATE.wins + APP_STATE.losses + APP_STATE.ties;
     const rate = total > 0 ? ((APP_STATE.wins / total) * 100).toFixed(1) : 0.0;
     dom.p1WinRate.textContent = `${rate}%`;
-    dom.p1LongestStreak.textContent = APP_STATE.streak; // Showing current streak for session context or best?
-    // Let's match original: "Longest Streak" = highest recorded
     dom.p1LongestStreak.textContent = APP_STATE.longestStreak;
-
-    // P2 Stats (AI - Session only really makes sense here visually)
     const aiRate = total > 0 ? ((APP_STATE.losses / total) * 100).toFixed(1) : 0.0;
     dom.p2WinRate.textContent = `${aiRate}%`;
-    dom.statsBox.querySelector('#p2-longest-streak').textContent = "-";
 }
 
 function addToHistory(result, p1, p2) {
     const li = document.createElement('li');
     const p1e = iToE(p1);
     const p2e = iToE(p2);
-
     let text = "";
     if (result === 'win') text = `${APP_STATE.username} Wins (${p1e} vs ${p2e})`;
-    else if (result === 'lose') text = `AI Wins (${p2e} vs ${p1e})`;
+    else if (result === 'lose') text = `${currentGame.p2Name} Wins (${p2e} vs ${p1e})`;
     else text = `Tie (${p1e} vs ${p2e})`;
-
     li.textContent = text;
     li.className = result;
-
     dom.historyList.prepend(li);
     if (dom.historyList.children.length > 10) dom.historyList.lastChild.remove();
 }
-
-// --- Utilities ---
 
 function iToE(move) {
     const emojiMap = { 'rock': '✊', 'paper': '🖐️', 'scissors': '✌️' };
@@ -496,6 +720,12 @@ function exitToMenu() {
     dom.gameContainer.style.display = 'none';
     dom.statsBox.style.display = 'none';
     dom.winnerModal.style.display = 'none';
+    dom.waitingModal.style.display = 'none';
+
+    // Stop Peer
+    if (conn) { conn.close(); conn = null; }
+    if (peer) { peer.destroy(); peer = null; }
+
     dom.modeModal.style.display = 'flex';
 }
 
