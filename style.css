@@ -35,17 +35,24 @@ body {
 }
 
 .container {
-    background: rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(8px);
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border-radius: 20px;
     border: 1px solid rgba(255, 255, 255, 0.3);
     padding: 30px 40px;
     max-width: 450px;
     width: 100%;
     box-shadow:
-        0 4px 30px rgba(0, 0, 0, 0.1),
-        inset 0 0 40px rgba(255, 255, 255, 0.05);
+        0 8px 32px 0 rgba(31, 38, 135, 0.37),
+        inset 0 0 20px rgba(255, 255, 255, 0.1);
     text-align: center;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Enhanced Depth on Hover */
+.container:hover {
+    box-shadow: 0 12px 40px 0 rgba(31, 38, 135, 0.45), inset 0 0 30px rgba(255, 255, 255, 0.15);
 }
 
 body.dark-mode {
@@ -56,10 +63,9 @@ body.dark-mode {
 }
 
 body.dark-mode .container {
-    background: rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
 }
 
 body.dark-mode .modal-content {
@@ -850,6 +856,49 @@ body.dark-mode #send-chat-btn svg {
     h1 {
         font-size: 1.8rem;
     }
+}
+
+/* --- RIPPLE EFFECT --- */
+.clickable {
+    position: relative;
+    overflow: hidden;
+}
+
+.ripple {
+    position: absolute;
+    border-radius: 50%;
+    transform: scale(0);
+    animation: ripple 0.6s linear;
+    background-color: rgba(255, 255, 255, 0.7);
+}
+
+@keyframes ripple {
+    to {
+        transform: scale(4);
+        opacity: 0;
+    }
+}
+
+/* --- STREAK GLOW ANIMATION --- */
+@keyframes streak-glow {
+    0% {
+        box-shadow: 0 0 5px #ffaf7b;
+    }
+
+    50% {
+        box-shadow: 0 0 20px #ffaf7b, 0 0 30px #d76d77;
+    }
+
+    100% {
+        box-shadow: 0 0 5px #ffaf7b;
+    }
+}
+
+.avatar-streak-glow {
+    animation: streak-glow 1.5s infinite alternate;
+    border-radius: 50%;
+    position: relative;
+    z-index: 1;
 }
 
 /* --- TOAST NOTIFICATION STYLES (Unchanged) --- */

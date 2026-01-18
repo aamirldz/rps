@@ -139,6 +139,44 @@ function setupTheme() {
         localStorage.setItem('mode', isDark ? 'dark' : 'light');
         playSound('sound-click');
     });
+
+    // --- RIPPLE EFFECT HANDLER ---
+    document.addEventListener('click', (e) => {
+        if (e.target.closest('.clickable')) {
+            const btn = e.target.closest('.clickable');
+            createRipple(e, btn);
+        }
+    });
+}
+
+function createRipple(event, button) {
+    const circle = document.createElement('span');
+    const diameter = Math.max(button.clientWidth, button.clientHeight);
+    const radius = diameter / 2;
+
+    const rect = button.getBoundingClientRect();
+
+    // Check if it's a keyboard trigger or actual click
+    let x, y;
+    if (event.clientX === 0 && event.clientY === 0) {
+        x = rect.width / 2 - radius;
+        y = rect.height / 2 - radius;
+    } else {
+        x = event.clientX - rect.left - radius;
+        y = event.clientY - rect.top - radius;
+    }
+
+    circle.style.width = circle.style.height = `${diameter}px`;
+    circle.style.left = `${x}px`;
+    circle.style.top = `${y}px`;
+    circle.classList.add('ripple');
+
+    const ripple = button.getElementsByClassName('ripple')[0];
+    if (ripple) {
+        ripple.remove();
+    }
+
+    button.appendChild(circle);
 }
 
 function checkAuth() {
@@ -570,6 +608,15 @@ function handleRoundResult(result, p1Move, p2Move) {
         playSound('sound-win');
         dom.player1Hand.classList.add('win-hand');
         dom.player2Hand.classList.add('lose-hand');
+
+        // --- CONFETTI (Small Burst) ---
+        confetti({
+            particleCount: 50,
+            spread: 60,
+            origin: { y: 0.7 },
+            colors: ['#ffaf7b', '#d76d77', '#3a1c71']
+        });
+
         currentGame.p1Score++;
         currentGame.p1SeriesScore++;
         APP_STATE.wins++;
@@ -578,6 +625,12 @@ function handleRoundResult(result, p1Move, p2Move) {
             APP_STATE.longestStreak = APP_STATE.streak;
             localStorage.setItem('rps_longestStreak', APP_STATE.longestStreak);
         }
+
+        // --- STREAK GLOW ---
+        if (APP_STATE.streak >= 3) {
+            dom.player1Avatar.classList.add('avatar-streak-glow');
+        }
+
     } else if (result === 'lose') {
         msg = isMultiplayer ? "Opponent Wins the Round! 🥈" : "Computer Wins the Round! 🥈";
         playSound('sound-lose');
@@ -587,6 +640,9 @@ function handleRoundResult(result, p1Move, p2Move) {
         currentGame.p2SeriesScore++;
         APP_STATE.losses++;
         APP_STATE.streak = 0;
+
+        dom.player1Avatar.classList.remove('avatar-streak-glow');
+
     } else {
         msg = "It's a Tie! 🤝";
         playSound('sound-tie');
@@ -649,6 +705,34 @@ function checkSeriesWinner() {
     if (winner) {
         document.getElementById('final-winner-message').textContent = `${winner} wins the Best of ${seriesLength} series! 🏆`;
         dom.winnerModal.style.display = 'flex';
+
+        // --- HUGE CONFETTI BLAST ---
+        if (winner === APP_STATE.username) {
+            var duration = 3000;
+            var end = Date.now() + duration;
+
+            (function frame() {
+                confetti({
+                    particleCount: 5,
+                    angle: 60,
+                    spread: 55,
+                    origin: { x: 0 },
+                    colors: ['#ffaf7b', '#d76d77', '#3a1c71']
+                });
+                confetti({
+                    particleCount: 5,
+                    angle: 120,
+                    spread: 55,
+                    origin: { x: 1 },
+                    colors: ['#ffaf7b', '#d76d77', '#3a1c71']
+                });
+
+                if (Date.now() < end) {
+                    requestAnimationFrame(frame);
+                }
+            }());
+        }
+
         return true;
     }
     return false;
