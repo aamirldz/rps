@@ -55,6 +55,35 @@ body {
     transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
 
+/* Screen Shake Effect for Defeat */
+.shake-screen {
+    animation: shake-screen 0.5s cubic-bezier(.36, .07, .19, .97) both;
+}
+
+@keyframes shake-screen {
+
+    10%,
+    90% {
+        transform: translate3d(-1px, 0, 0);
+    }
+
+    20%,
+    80% {
+        transform: translate3d(2px, 0, 0);
+    }
+
+    30%,
+    50%,
+    70% {
+        transform: translate3d(-4px, 0, 0);
+    }
+
+    40%,
+    60% {
+        transform: translate3d(4px, 0, 0);
+    }
+}
+
 /* Enhanced Depth on Hover */
 .container:hover {
     box-shadow: 0 12px 40px 0 rgba(31, 38, 135, 0.45), inset 0 0 30px rgba(255, 255, 255, 0.15);
@@ -399,7 +428,50 @@ body.dark-mode .title-scissors {
     border: 3px solid rgba(255, 255, 255, 0.4);
     transform-style: preserve-3d;
     transition: transform 0.7s ease, background 0.3s ease, box-shadow 0.5s ease, border-color 0.5s ease;
+    overflow-x: hidden;
     position: relative;
+}
+
+/* --- STARFIELD BACKGROUND --- */
+.stars,
+.stars2,
+.stars3 {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    pointer-events: none;
+}
+
+.stars {
+    background: transparent url('https://s3-us-west-2.amazonaws.com/s.cdpn.io/1231630/stars.png') repeat;
+    animation: star-move 100s linear infinite;
+}
+
+.stars2 {
+    background: transparent url('https://s3-us-west-2.amazonaws.com/s.cdpn.io/1231630/stars.png') repeat;
+    animation: star-move 150s linear infinite;
+    opacity: 0.6;
+    background-size: 200px;
+}
+
+.stars3 {
+    background: transparent url('https://s3-us-west-2.amazonaws.com/s.cdpn.io/1231630/stars.png') repeat;
+    animation: star-move 200s linear infinite;
+    opacity: 0.4;
+    background-size: 300px;
+}
+
+@keyframes star-move {
+    from {
+        background-position: 0 0;
+    }
+
+    to {
+        background-position: 1000px 1000px;
+    }
 }
 
 @keyframes shakeHand {
@@ -428,6 +500,28 @@ body.dark-mode .title-scissors {
 
 .hand.shaking {
     animation: shakeHand 0.7s cubic-bezier(.36, .07, .19, .97) infinite both;
+}
+
+/* Hand Slam Reveal Animation */
+.hand.pop-in {
+    animation: hand-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes hand-pop {
+    0% {
+        transform: scale(0.5) translateY(-50px);
+        opacity: 0;
+    }
+
+    70% {
+        transform: scale(1.2) translateY(10px);
+        opacity: 1;
+    }
+
+    100% {
+        transform: scale(1) translateY(0);
+        opacity: 1;
+    }
 }
 
 .message {

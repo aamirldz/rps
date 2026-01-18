@@ -509,6 +509,8 @@ function sendChatMessage() {
 
 function addChatMessage(text, isMe) {
     const div = document.createElement('div');
+    if (!isMe) playSound('sound-pop'); // New Chat Sound
+
     div.className = `chat-message ${isMe ? 'my-message' : 'other-message'}`;
     div.innerHTML = `
         <div class="message-bubble">
@@ -569,9 +571,19 @@ async function playRoundAI(playerChoice) {
     let result = 'lose';
     if (playerChoice === aiChoice) result = 'tie';
     else if (WIN_CONDITIONS[playerChoice] === aiChoice) result = 'win';
+    // 4. Update UI
+    const emojiMap = { 'rock': '✊', 'paper': '🖐️', 'scissors': '✌️' };
 
-    dom.player1Hand.textContent = iToE(playerChoice);
-    dom.player2Hand.textContent = iToE(aiChoice);
+    // Impact Reveal
+    dom.player1Hand.textContent = emojiMap[playerChoice];
+    dom.player2Hand.textContent = emojiMap[aiChoice];
+
+    dom.player1Hand.classList.add('pop-in');
+    dom.player2Hand.classList.add('pop-in');
+    setTimeout(() => {
+        dom.player1Hand.classList.remove('pop-in');
+        dom.player2Hand.classList.remove('pop-in');
+    }, 500);
 
     handleRoundResult(result, playerChoice, aiChoice);
 }
@@ -636,6 +648,11 @@ function handleRoundResult(result, p1Move, p2Move) {
         playSound('sound-lose');
         dom.player2Hand.classList.add('win-hand');
         dom.player1Hand.classList.add('lose-hand');
+
+        // Screen Shake on Loss
+        dom.gameContainer.classList.add('shake-screen');
+        setTimeout(() => dom.gameContainer.classList.remove('shake-screen'), 500);
+
         currentGame.p2Score++;
         currentGame.p2SeriesScore++;
         APP_STATE.losses++;
